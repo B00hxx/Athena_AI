@@ -1,0 +1,101 @@
+# Athena AI: full stack.
+#   docker compose up -d --build                                           (CPU)
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build   (NVIDIA GPU)
+name: athenaai
+
+x-ollama-env: &ollama-env
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma:7b}
+
+services:
+  # ---- PostgreSQL: users, documents, chat history, flashcards ----
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: athena_db
+      POSTGRES_USER: athena_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${DB_PORT:-5433}:5432"   # localhost only, for local development and debugging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U athena_user -d athena_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ---- Ollama: local LLM inference server ----
+  ollama:
+    image: ollama/ollama:${OLLAMA_VERSION:-latest}
+    volumes:
+      - ollama_models:/root/.ollama
+    ports:
+      - "127.0.0.1:${OLLAMA_PORT:-11434}:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ---- One-shot job: download the chat model into the ollama volume (no-op once cached) ----
+  ollama-pull:
+    image: ollama/ollama:${OLLAMA_VERSION:-latest}
+    environment:
+      <<: *ollama-env
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c", "echo Pulling $$OLLAMA_MODEL... && ollama pull $$OLLAMA_MODEL"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+  # ---- FastAPI backend + RAG pipeline (Marker, sentence-transformers, ChromaDB) ----
+  backend:
+    build:
+      context: ./backend
+      args:
+        TORCH_VARIANT: cpu
+    image: athenaai-backend:cpu
+    environment:
+      <<: *ollama-env
+      DATABASE_URL: postgresql://athena_user:${DB_PASSWORD}@db:5432/athena_db
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-8192}
+      PDF_PARSER: ${PDF_PARSER:-marker}
+      RETRIEVAL_TOP_K: ${RETRIEVAL_TOP_K:-5}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-10}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+    volumes:
+      - app_data:/data              # uploaded PDFs, extracted Markdown, ChromaDB index
+      - model_cache:/models         # Marker + Hugging Face model weights
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"  # Swagger UI at http://localhost:8000/docs
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # ---- React SPA served by nginx, which also proxies /api to the backend ----
+  frontend:
+    build:
+      context: .
+      args:
+        VITE_API_URL: /api
+    image: athenaai-frontend
+    ports:
+      - "${APP_PORT:-3000}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  ollama_models:
+  app_data:
+  model_cache:

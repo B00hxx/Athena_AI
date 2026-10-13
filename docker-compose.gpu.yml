@@ -1,0 +1,22 @@
+# NVIDIA GPU override (requires the NVIDIA Container Toolkit):
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+# Runs the LLM and Marker's PDF models on the GPU, which is many times faster than CPU.
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+services:
+  ollama:
+    <<: *gpu
+
+  backend:
+    <<: *gpu
+    build:
+      args:
+        TORCH_VARIANT: cu128
+    image: athenaai-backend:gpu
