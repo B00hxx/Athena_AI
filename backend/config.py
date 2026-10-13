@@ -56,5 +56,9 @@ CHUNK_OVERLAP = _int("CHUNK_OVERLAP", 150)
 RETRIEVAL_TOP_K = _int("RETRIEVAL_TOP_K", 5)
 # Previous question/answer pairs sent with each question for follow-ups
 CHAT_HISTORY_TURNS = _int("CHAT_HISTORY_TURNS", 3)
+# Parsing is stopped (document marked failed) if it takes longer than this
+INGEST_TIMEOUT_MINUTES = _int("INGEST_TIMEOUT_MINUTES", 60)
+# Unload the LLM from the GPU while Marker parses a PDF (for GPUs that can't hold both, e.g. 6-8 GB)
+FREE_GPU_FOR_INGESTION = os.getenv("FREE_GPU_FOR_INGESTION", "false").lower() in ("1", "true", "yes")
 # Character budget of document text used to generate one flashcard set
 FLASHCARD_CONTEXT_CHARS = _int("FLASHCARD_CONTEXT_CHARS", 12000)

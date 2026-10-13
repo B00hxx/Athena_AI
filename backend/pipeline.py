@@ -180,7 +180,12 @@ def document_chunks(document_id: str) -> list[dict]:
 
 
 def warm_up() -> None:
-    """Load the models up front so the first upload isn't slowed down by it."""
+    """Load the embedder up front so the first question isn't slowed down by it."""
     _embedder()
-    if PDF_PARSER != "pdftext":
-        _marker_converter()
+
+
+def prefetch_marker_models() -> None:
+    """Download Marker's models into the cache (first run only). Run in a child process."""
+    from marker.models import create_model_dict
+
+    create_model_dict()

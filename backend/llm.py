@@ -39,6 +39,14 @@ def stream(messages: list[dict], temperature: float = 0.3) -> Iterator[str]:
             yield part.message.content
 
 
+def unload() -> None:
+    """Ask Ollama to release the model's memory now (it is reloaded on the next request)."""
+    try:
+        _client().generate(model=OLLAMA_MODEL, keep_alive=0)
+    except Exception:
+        pass  # best effort: if Ollama is busy or down, parsing just shares the GPU
+
+
 def model_status() -> tuple[bool, str]:
     """Return (ready, detail) for the health check."""
     try:

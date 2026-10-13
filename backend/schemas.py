@@ -43,6 +43,8 @@ class Document(BaseModel):
     error: Optional[str] = None
     num_chunks: int
     created_at: datetime
+    # While processing: 0 = being processed now, n = n documents ahead in the queue
+    queue_position: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 

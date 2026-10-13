@@ -14,6 +14,13 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 MAX_FILE_SIZE = MAX_UPLOAD_MB * 1024 * 1024
 
 
+def _out(doc: models.Document) -> schemas.Document:
+    out = schemas.Document.model_validate(doc)
+    if doc.status == models.Document.STATUS_PROCESSING:
+        out.queue_position = ingestion.queue_position(doc.id)
+    return out
+
+
 @router.post("", response_model=schemas.Document, status_code=status.HTTP_202_ACCEPTED)
 def upload_document(
     file: UploadFile = File(...),
@@ -49,22 +56,23 @@ def upload_document(
     db.refresh(doc)
 
     ingestion.submit(document_id)
-    return doc
+    return _out(doc)
 
 
 @router.get("", response_model=list[schemas.Document])
 def list_documents(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    return (
+    docs = (
         db.query(models.Document)
         .filter(models.Document.owner_id == user.id)
         .order_by(models.Document.created_at.desc())
         .all()
     )
+    return [_out(d) for d in docs]
 
 
 @router.get("/{document_id}", response_model=schemas.Document)
 def get_document(document_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    return get_owned_document(db, user, document_id)
+    return _out(get_owned_document(db, user, document_id))
 
 
 @router.get("/{document_id}/messages", response_model=list[schemas.ChatMessage])
@@ -82,7 +90,7 @@ def reprocess_document(document_id: str, db: Session = Depends(get_db), user: mo
     db.commit()
     db.refresh(doc)
     ingestion.submit(document_id)
-    return doc
+    return _out(doc)
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -90,6 +98,7 @@ def delete_document(document_id: str, db: Session = Depends(get_db), user: model
     doc = get_owned_document(db, user, document_id)
     db.delete(doc)
     db.commit()
+    ingestion.cancel(document_id)  # stop parsing it if it is queued or in progress
     pipeline.delete_document(document_id)
     ingestion.pdf_path(document_id).unlink(missing_ok=True)
     ingestion.markdown_path(document_id).unlink(missing_ok=True)

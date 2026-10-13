@@ -112,7 +112,7 @@ A few design decisions worth knowing:
 - **Embeddings carry their heading.** The vector for a passage is computed from `section heading + passage`, which helps short passages get found ("it takes place in the stroma" is much easier to retrieve when the embedding also knows it's about the Calvin cycle). The stored text is the raw passage.
 - **Only the current question carries context.** Earlier turns are sent as plain question/answer pairs, so the context window stays small no matter how long the conversation gets.
 - **Flashcards cover the whole document.** Without a topic, passages are sampled at even intervals up to a 12,000-character budget, so a 40-page PDF doesn't produce 10 cards about page 1. With a topic, the 20 best-matching passages are used, in reading order. The LLM is constrained to a JSON schema via Ollama's structured outputs.
-- **Ingestion is serialized.** Marker's models take several GB of memory, so one worker thread processes uploads in order. Documents interrupted by a restart are picked up again automatically, and a failed one can be retried from the UI.
+- **Ingestion is a queue of isolated jobs.** Marker's models take several GB of memory, so uploads are processed one at a time, in order, and the UI shows a document's place in line. Each PDF is parsed in a short-lived child process: deleting a document kills its parser immediately so it can't hold up the queue, a parse that runs past `INGEST_TIMEOUT_MINUTES` is stopped and marked failed, a crash can't take the API down, and Marker's GPU memory is released as soon as the document is done. Documents interrupted by a restart are picked up again, and a failed one can be retried from the UI.
 
 ## Tech stack
 
@@ -165,12 +165,14 @@ Measured with `gemma:7b` on a laptop (20-thread CPU, RTX 4050 with 6 GB VRAM), o
 
 | Step | CPU only | GPU override |
 |---|---|---|
-| Ingest the PDF (Marker + embeddings) | ~55 s | ~4 s |
+| Ingest the PDF (Marker + embeddings) | ~55 s | ~10 s (about 7 s of it loading Marker) |
 | First answer after start (model loads) | ~80 s | ~10 s |
-| Time to first token, warm | 20–30 s | ~5 s |
+| Time to first token, warm | 20–30 s | 1–2 s |
 | Embedding + retrieval per question | < 1 s | < 1 s |
 
-On a 6 GB card, Marker's models (~3.5 GB of VRAM) and Gemma 7B (5 GB) don't both fit, so Ollama runs Gemma split 55/45 between CPU and GPU. It still works and is much faster than CPU only. A card with 12 GB or more runs everything on the GPU, and so does a smaller model on a 6 GB card (see [DOCKER.md](DOCKER.md#gpu)). If you're stuck on CPU, a smaller model helps a lot: set `OLLAMA_MODEL=gemma2:2b` or `qwen2.5:3b` in `.env` and run `docker compose up -d`.
+Gemma 7B with an 8K context needs about 9 GB, so on a 6 GB card Ollama runs it split 55/45 between CPU and GPU. It's still fast once loaded. While a PDF is being parsed, the GPU stack unloads Gemma so Marker gets the whole card (`FREE_GPU_FOR_INGESTION`); the next question reloads it. A card with 12 GB or more runs everything on the GPU at once (see [DOCKER.md](DOCKER.md#gpu)).
+
+*CPU numbers were measured before parsing moved into a child process, which adds a few seconds of model loading per PDF.* If you're stuck on CPU, a smaller model helps a lot: set `OLLAMA_MODEL=gemma2:2b` or `qwen2.5:3b` in `.env` and run `docker compose up -d`.
 
 ## Configuration
 
@@ -186,6 +188,8 @@ Everything is configured through `.env` (see [`.env.example`](.env.example)). Th
 | `RETRIEVAL_TOP_K` | `5` | Passages retrieved per question |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `150` | Passage size and overlap, in characters |
 | `MAX_UPLOAD_MB` | `10` | Upload size limit |
+| `INGEST_TIMEOUT_MINUTES` | `60` | Stop parsing a PDF (and mark it failed) after this long |
+| `FREE_GPU_FOR_INGESTION` | `true` on the GPU stack | Unload the LLM while Marker parses; set `false` on 12 GB+ cards |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Access token lifetime (refresh tokens last 7 days) |
 | `APP_PORT` / `API_PORT` / `DB_PORT` | `3000` / `8000` / `5433` | Host ports (API and DB bind to localhost only) |
 
@@ -211,11 +215,34 @@ uvicorn backend.main:app --reload --reload-dir backend
 npm run dev
 ```
 
-Useful checks before a commit:
+## Testing
+
+The project has three layers of tests. `make test` runs the first two in Docker, so you don't need Node or a Python environment installed.
 
 ```bash
-npm run lint && npm run build     # ESLint + TypeScript + production build
+make test             # backend + frontend unit and integration tests
+make test-backend     # pytest, with a coverage report
+make test-frontend    # Vitest + ESLint, in a throwaway Node container
+make test-e2e         # against the running stack, with the real models (run `make up` first)
 ```
+
+**Backend** (`backend/tests`, pytest, 110 tests, ~96% line coverage):
+
+- `unit/` covers the pure logic. That includes chunking (every passage keeps an exact page and section), splitting Marker's paginated output into pages, prompt construction, flashcard parsing (code fences, bare arrays, broken JSON), the passage sampling that spreads flashcards across the whole document, JWT token types and expiry, and password rules.
+- `integration/` drives the real FastAPI app over HTTP, with a real database (SQLite), a real ChromaDB index, real `pdftext` parsing of generated PDFs and the real background ingestion thread. Only the two model-backed parts are replaced: the embedder by a deterministic bag-of-words fake (so retrieval results are meaningful and repeatable), and Ollama by a fake that records every prompt it receives. These tests check that the right passage is retrieved, that follow-up questions carry history, that one user can never see another's documents, that failed ingestion can be retried, and that documents interrupted by a restart are resumed. The queue tests run real parser processes: they check timeouts, crashes, and that deleting a document mid-parse unblocks the uploads waiting behind it.
+- `e2e/` runs against a live stack with real Marker and Gemma. It uploads a lecture, checks the answer cites page 3 and mentions RuBisCO, and generates flashcards. It's skipped unless `ATHENA_E2E_URL` is set.
+
+**Frontend** (`src/**/*.test.ts(x)`, Vitest + Testing Library, 61 tests, ~90% line coverage). The API client's tests cover token refresh, error messages, and stream parsing when JSON lines arrive split across network chunks. Every page is rendered against a mocked API: login and signup validation and server errors, uploading, queueing, polling and retrying documents, streamed answers with expandable sources, web search, deleting, flashcard review and generation, and the redirect away from protected routes.
+
+With Node and a backend virtualenv installed locally you can also run them directly:
+
+```bash
+npm test                                   # or npm run test:watch / npm run test:coverage
+pip install -r backend/requirements-dev.txt
+python -m pytest backend/tests
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the frontend lint, tests and build, and the backend tests in the Docker test image. It also validates both Compose files on every push and pull request.
 
 ## API
 
@@ -276,18 +303,23 @@ AthenaAI/
 │   ├── models.py / schemas.py  SQLAlchemy tables / Pydantic request & response models
 │   ├── auth.py / deps.py       JWT handling, current user, document ownership checks
 │   ├── routers/                auth · documents · chat · flashcards
+│   ├── tests/                  unit/ · integration/ · e2e/ (pytest)
 │   ├── requirements.txt        Direct dependencies (PyTorch installed separately)
-│   └── Dockerfile              Python 3.12 slim, CPU or CUDA PyTorch, non-root
+│   ├── requirements-dev.txt    + pytest, pytest-cov
+│   └── Dockerfile              Python 3.12 slim, CPU or CUDA PyTorch, non-root; `test` stage for CI
 ├── src/                        React app
 │   ├── components/             Pages: landing, about, contact, login, signup, chat, flashcards
 │   ├── components/ui/          Radix-based primitives (button, card, input, ...)
 │   ├── context/auth.tsx        Auth state
-│   └── lib/api.ts              Typed API client: token refresh, NDJSON chat streaming
+│   ├── lib/api.ts              Typed API client: token refresh, NDJSON chat streaming
+│   ├── test/                   Vitest setup, API mock, render helpers
+│   └── **/*.test.ts(x)         Tests next to the code they cover
 ├── docker-compose.yml          db · ollama · ollama-pull · backend · frontend
 ├── docker-compose.gpu.yml      NVIDIA GPU override
 ├── Dockerfile                  Frontend: Node 22 build → nginx
 ├── nginx.conf                  SPA routing, /api reverse proxy, caching, security headers
-├── Makefile                    make env · up · gpu · logs · health · clean ...
+├── Makefile                    make env · up · gpu · test · logs · health · clean ...
+├── .github/workflows/ci.yml    Lint, tests and builds on every push
 └── start.sh                    Local development with hot reload
 ```
 
@@ -310,9 +342,9 @@ It waits for `ollama-pull` to finish downloading the model. Check `docker compos
 </details>
 
 <details>
-<summary><b>A document is stuck on "Processing…"</b></summary>
+<summary><b>A document is stuck on "Processing…" or "Waiting in line…"</b></summary>
 
-The first upload after a fresh install waits for Marker's models to download (a few GB). Check `docker compose logs -f backend`. Large PDFs on CPU take a few seconds per page; set `PDF_PARSER=pdftext` for near-instant ingestion of PDFs that have a text layer.
+PDFs are processed one at a time, so a document waits behind earlier uploads ("Waiting in line" shows how many). Deleting a document removes it from the line, or stops it if it's being parsed. The first upload after a fresh install also waits for Marker's models to download (a few GB). Check `docker compose logs -f backend`. Large PDFs on CPU take a few seconds per page; set `PDF_PARSER=pdftext` for near-instant ingestion of PDFs that have a text layer. Nothing can stay stuck forever: parsing stops after `INGEST_TIMEOUT_MINUTES`.
 </details>
 
 <details>

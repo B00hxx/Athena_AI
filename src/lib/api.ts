@@ -12,6 +12,8 @@ export type Doc = {
   status: DocumentStatus
   error: string | null
   num_chunks: number
+  /** While processing: 0 = being processed now, n = n documents ahead in the queue */
+  queue_position?: number | null
   created_at: string
 }
 

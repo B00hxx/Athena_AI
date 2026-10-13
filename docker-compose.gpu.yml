@@ -16,6 +16,10 @@ services:
 
   backend:
     <<: *gpu
+    environment:
+      # Unload the LLM while Marker parses a PDF so both don't compete for VRAM.
+      # Set to false on GPUs with enough memory for both (roughly 12 GB+).
+      FREE_GPU_FOR_INGESTION: ${FREE_GPU_FOR_INGESTION:-true}
     build:
       args:
         TORCH_VARIANT: cu128

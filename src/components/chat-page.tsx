@@ -206,7 +206,7 @@ export function ChatPage() {
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{doc.filename}</div>
                   <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5">
-                    {doc.status === "processing" && <><Loader2 className="w-3 h-3 animate-spin text-amber-400" /> Processing…</>}
+                    {doc.status === "processing" && <><Loader2 className="w-3 h-3 animate-spin text-amber-400" /> {doc.queue_position ? "Queued…" : "Processing…"}</>}
                     {doc.status === "failed" && <><AlertTriangle className="w-3 h-3 text-red-400" /> Failed</>}
                     {doc.status === "ready" && <>{formatSize(doc.size)} · {doc.num_chunks} chunks</>}
                   </div>
@@ -270,11 +270,23 @@ export function ChatPage() {
             {selected?.status === "processing" && (
               <div className="mt-16 text-center space-y-3">
                 <Loader2 className="w-12 h-12 text-blue-400 mx-auto animate-spin" />
-                <h3 className="text-xl font-semibold">Reading your PDF…</h3>
-                <p className="text-gray-400 max-w-md mx-auto text-sm">
-                  Extracting text and layout, splitting it into passages and indexing them for search.
-                  This takes a few seconds per page (longer the very first time, while models load).
-                </p>
+                {selected.queue_position ? (
+                  <>
+                    <h3 className="text-xl font-semibold">Waiting in line…</h3>
+                    <p className="text-gray-400 max-w-md mx-auto text-sm">
+                      {selected.queue_position} document{selected.queue_position === 1 ? " is" : "s are"} being
+                      processed before this one. PDFs are read one at a time.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <h3 className="text-xl font-semibold">Reading your PDF…</h3>
+                    <p className="text-gray-400 max-w-md mx-auto text-sm">
+                      Extracting text and layout, splitting it into passages and indexing them for search.
+                      This takes a few seconds per page (longer the very first time, while models load).
+                    </p>
+                  </>
+                )}
               </div>
             )}
 

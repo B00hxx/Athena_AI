@@ -2,10 +2,10 @@
 COMPOSE     := docker compose
 COMPOSE_GPU := docker compose -f docker-compose.yml -f docker-compose.gpu.yml
 
-.PHONY: help env up gpu down logs ps health pull clean dev
+.PHONY: help env up gpu down logs ps health pull clean dev test test-backend test-frontend test-e2e
 
 help:            ## Show this help
-	@grep -E '^[a-z]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-8s %s\n", $$1, $$2}'
+	@grep -E '^[a-z0-9-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-14s %s\n", $$1, $$2}'
 
 env:             ## Create .env with freshly generated secrets
 	@test -f .env && echo ".env already exists" || ( \
@@ -39,3 +39,19 @@ clean:           ## Stop the stack and DELETE all data (users, documents, models
 
 dev:             ## Local dev: db + ollama in Docker, backend and frontend with hot reload
 	./start.sh
+
+test: test-backend test-frontend  ## Run all unit + integration tests (in Docker, nothing to install)
+
+test-backend:    ## Backend unit + integration tests (pytest, with coverage)
+	docker build -q --target test -t athenaai-backend:test ./backend
+	docker run --rm athenaai-backend:test python -m pytest backend/tests -p no:cacheprovider --cov=backend --cov-report=term-missing:skip-covered
+
+test-frontend:   ## Frontend tests (Vitest), in a throwaway Node container
+	docker run --rm -v "$$PWD":/src:ro node:22-alpine sh -c '\
+		mkdir /app && cd /src && tar cf - --exclude=node_modules --exclude=dist --exclude=coverage . | tar xf - -C /app && \
+		cd /app && npm ci --no-audit --no-fund --loglevel=error && npm run lint && npm test'
+
+test-e2e:        ## End-to-end tests against the running stack (real models; run `make up` first)
+	docker build -q --target test -t athenaai-backend:test ./backend
+	docker run --rm --network host -e ATHENA_E2E_URL=http://localhost:$${APP_PORT:-3000}/api \
+		athenaai-backend:test python -m pytest backend/tests/e2e -v -p no:cacheprovider

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.12-slim
+FROM python:3.12-slim AS runtime
 
 # cpu (default, small image) or a CUDA wheel index such as cu128 for GPU hosts
 ARG TORCH_VARIANT=cpu
@@ -47,3 +47,16 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=4)"
 
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+
+# ---- Test image: runtime + pytest. Build with --target test (see `make test-backend`) ----
+FROM runtime AS test
+USER root
+COPY requirements-dev.txt .
+RUN pip install -r requirements-dev.txt
+# /app belongs to root; keep pytest/coverage artifacts somewhere writable
+ENV COVERAGE_FILE=/tmp/.coverage
+USER app
+CMD ["python", "-m", "pytest", "backend/tests", "-p", "no:cacheprovider"]
+
+# ---- Default image (last stage) ----
+FROM runtime AS app

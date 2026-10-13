@@ -43,6 +43,8 @@ make gpu
 
 The override gives the GPU to both `ollama` (LLM inference) and `backend`, and rebuilds the backend with CUDA 12.8 PyTorch (`TORCH_VARIANT=cu128`, tagged `athenaai-backend:gpu`) so Marker's layout and OCR models run on the GPU too. The CUDA image is larger than the CPU one because it bundles the CUDA runtime libraries.
 
+Marker only holds GPU memory while it parses a PDF (each document is parsed in its own short-lived process). The override also sets `FREE_GPU_FOR_INGESTION=true`, which unloads the LLM from the GPU before each parse so the two never compete for VRAM. On cards that run out of VRAM, WSL and Windows drivers silently fall back to much slower shared memory, which can stretch a one-minute parse to tens of minutes. If your card has 12 GB or more, set `FREE_GPU_FOR_INGESTION=false` in `.env` to keep the LLM loaded.
+
 Check that the GPU is actually in use:
 
 ```bash
