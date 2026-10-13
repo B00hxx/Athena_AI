@@ -129,7 +129,7 @@ A few design decisions worth knowing:
 You need Docker with Compose v2, about 25 GB of free disk space and 16 GB of RAM. Most of that is models: Gemma 7B is 5.4 GB on disk, Marker's models 3.5 GB, and on CPU the running stack holds about 14 GB in memory (Ollama ~9 GB, the backend ~5 GB with Marker loaded). An NVIDIA GPU is optional but strongly recommended.
 
 ```bash
-git clone https://github.com/BahaRiahi3/AthenaAI.git
+git clone https://github.com/B00hxx/Athena_AI
 cd AthenaAI
 
 make env     # creates .env with a random DB password and JWT secret
