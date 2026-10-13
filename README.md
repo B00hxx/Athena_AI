@@ -332,14 +332,3 @@ Use the GPU override (`make gpu`), or a smaller model (`OLLAMA_MODEL=gemma2:2b`)
 
 Set `APP_PORT`, `API_PORT` or `DB_PORT` in `.env` and run `docker compose up -d`.
 </details>
-
-## Team
-
-Athena AI was built by:
-
-| | |
-|---|---|
-| <img src="public/Mohamed%20Baha%20Riahi.jpg" width="60" /> | **Mohamed Baha Riahi** · [LinkedIn](https://www.linkedin.com/in/mohamedbahariahi/) |
-| <img src="public/Mohamed%20Aziz%20Merichkou.jpg" width="60" /> | **Mohamed Aziz Merichkou** · [LinkedIn](https://www.linkedin.com/in/mohamed-aziz-merichkou-98b1a322a/) |
-| <img src="public/Dhia%20Dachraoui.jpg" width="60" /> | **Dhia Dachraoui** · [LinkedIn](https://www.linkedin.com/in/dhia-dachraoui-65bb14338/) |
-| <img src="public/Omar%20Chaaar.jpg" width="60" /> | **Omar Chaaar** · [LinkedIn](https://www.linkedin.com/in/omar-chaar-827a03281/) |
